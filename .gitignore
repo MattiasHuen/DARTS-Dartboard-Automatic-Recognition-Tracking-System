@@ -1,3 +1,4 @@
 DARTS/
 Lecture Slides/
 .venv/
+__pycache__/
