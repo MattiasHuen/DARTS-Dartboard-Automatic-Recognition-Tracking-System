@@ -31,28 +31,12 @@ def direction_angles():
     return 2 * np.pi * np.arange(N_ANGLES) / N_ANGLES
 
 
-def median_frame(video_path, step=10):
+def median_frame(frames):
     """
     Combines a video into one clean image.
 
     Returns the median image and the list of frames that were used.
     """
-    cap = cv2.VideoCapture(str(video_path))
-    frames, index = [], 0
-
-    # Read the whole video and keep every `step`-th frame
-    while True:
-        ok, frame = cap.read()
-        if not ok:   # no more frames
-            break
-        if index % step == 0:
-            frames.append(frame)
-        index += 1
-
-    cap.release()
-
-    # Stack the frames into one array with shape (frames, height, width, 3).
-    # axis=0 takes the median over time, separately for every pixel and colour channel.
     return np.median(np.stack(frames), axis=0).astype(np.uint8), frames
 
 
@@ -505,9 +489,9 @@ def draw_board(image, board, thickness=1):
     return output
 
 
-def calibrate_from_video(video_path):
+def calibrate_from_video(frames):
     """Runs the full detector on one video: step 1 first, then steps 2-6 on the clean image."""
-    clean, frames = median_frame(video_path)
+    clean, frames = median_frame(frames)
 
     # Only the detection is timed, not reading the video
     start = time.perf_counter()
