@@ -55,3 +55,4 @@ def field_at(x, y, fields, field_map):
     if number < 0:
         return "Miss", 0
     return fields[number]["name"], fields[number]["score"]
+

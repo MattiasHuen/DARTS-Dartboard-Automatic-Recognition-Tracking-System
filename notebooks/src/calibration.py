@@ -5,7 +5,7 @@ import numpy as np
 import time
 
 
-def median_frame(frame_list, amount: int = 10, video: str = True):
+def median_frame(frame_list, amount: int = 1, video: str = True):
     """
     Calculate a median image from a video or list of frames,
     returns the median image and first frame
@@ -42,11 +42,6 @@ def find_centre(
         clahe_lim = 2.5,
         clahe_grid = (9,9)
         ):
-    """
-    
-    
-    """
-    
     gray = cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (0, 0), 1)
     clahe = cv2.createCLAHE(clipLimit=clahe_lim, tileGridSize=clahe_grid)
     gray_clahe = clahe.apply(gray)

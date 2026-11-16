@@ -89,6 +89,27 @@ class DartBoard:
             return isolated[y:y+h, x:x+w]
         else:
             return self.frame[y:y+h, x:x+w]
+
+    def outer_drawn_fields(self, with_fields: bool = True):
+        if self.fields_detected is False:
+            raise ValueError("Fields must be found first")
+
+        output = self.draw_fields() if with_fields else self.frame.copy()
+
+        mask = np.zeros(self.frame.shape[:2], dtype=np.uint8)
+
+        (cx, cy), (width, height), angle = self.outer_ellipse
+        cv2.ellipse(mask,
+        (int(cx), int(cy)),
+        (int(width / 2), int(height / 2)),
+        angle,
+        0,360,255,-1
+        )
+        
+        isolated = cv2.bitwise_and(output, output, mask=mask)
+
+        x, y, w, h = cv2.boundingRect(cv2.findNonZero(mask))
+        return isolated[y:y+h, x:x+w], (x, y)
         
     
 

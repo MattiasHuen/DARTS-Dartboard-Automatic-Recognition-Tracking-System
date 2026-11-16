@@ -5,9 +5,6 @@ import cv2
 import numpy as np
 import time
 
-
-
-
 def boundary_profile(gray):
     """Returns how strongly each row looks like a sector boundary."""
     # Blur along the columns and slightly along the rows, then take the slope along the rows
