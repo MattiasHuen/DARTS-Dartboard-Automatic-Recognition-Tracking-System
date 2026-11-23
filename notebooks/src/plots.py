@@ -9,11 +9,11 @@ def _get_ax(ax):
 
 
 def _style(ax, title, ylabel):
-    ax.set_title(title)
-    ax.set_ylabel(ylabel)
-    ax.set_xlabel("Time (s)")
+    ax.set_title(title, fontsize = 20)
+    ax.set_ylabel(ylabel, fontsize = 16)
+    ax.set_xlabel("Time (s)", fontsize = 16)
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=9)
+    ax.legend(loc="upper right", fontsize=12)
 
 
 def _plot_threshold(ax, data, column, threshold, name, above=True):
@@ -81,6 +81,18 @@ def plot_events(data, column, ax=None):
             label="Missed / bounced"
         )
 
+    if "dart_thrown" in data.columns:
+        detected = data["dart_thrown"].eq(1)
+
+        ax.scatter(
+            data.loc[detected, "time"],
+            data.loc[detected, column],
+            color="purple",
+            marker="^",
+            s=90,
+            zorder=5,
+            label="Throw detected"
+        )
     return ax
 
 

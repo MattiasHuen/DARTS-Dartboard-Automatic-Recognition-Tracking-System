@@ -6,6 +6,8 @@ from src.config import *
 from src.calibration import calibrate_from_video
 from src.visualization import draw_fields
 from src.field_detection import detect_fields
+from src.dart_detection import find_dart, ellipse_mask
+from src.scoring import field_at
 
 class DartBoard:
     """Detect and manage a dartboard."""
@@ -73,6 +75,37 @@ class DartBoard:
             raise ValueError("Fields must be found first")
         
         return draw_fields(self.frame, self.fields, self.field_map)
+
+
+    def detect_dart(self, before, tip_extension=5):
+        """Locate a newly landed blue dart and score its estimated tip.
+
+        `before` must be a FULL-SIZE frame from before this throw.
+        Current frame is `self.frame`, set using update_frame().
+        """
+        if not self.fields_detected:
+            raise ValueError("Detect the scoring fields first")
+
+        # Allow shaft and white flights to extend slightly past the board boundary.
+        center, (width, height), angle = self.outer_ellipse
+        padded_ellipse = (center, (width * 1.25, height * 1.25), angle)
+        mask = ellipse_mask(self.frame.shape, padded_ellipse)
+
+        result = find_dart(before, self.frame, mask, tip_extension=tip_extension)
+        result["field"] = None
+        result["score"] = None
+
+        if result["found"]:
+            x, y = np.rint(result["tip"]).astype(int)
+            height, width = self.field_map.shape
+            if 0 <= x < width and 0 <= y < height:
+                result["field"], result["score"] = field_at(
+                    x, y, self.fields, self.field_map
+                )
+            else:
+                result["field"], result["score"] = "Miss", 0
+
+        return result
 
     def inner_drawn_fields(self, with_fields: bool = True):
         if self.fields_detected is False:
