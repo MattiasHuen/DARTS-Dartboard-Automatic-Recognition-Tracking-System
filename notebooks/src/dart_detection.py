@@ -54,13 +54,22 @@ def calculate_difference(
 
 
 
-# --- Blue-dart tip detection: HSV, morphology, skeleton and endpoints ---
-# This section is the user's existing algorithm, kept separate from
-# calculate_difference() above (which is used for throw detection).
+# --- Blue-dart tip detection: HSV, colour change, morphology, skeleton ---
+# The whole dart (barrel, shaft and flights) is painted blue. The idea:
+#   1. Blue pixels (HSV) that have also CHANGED colour since the frame before the throw
+#      are the new dart. Requiring a change lets the blue limits be loose, so flights
+#      in shadow (dark blue) and in light (pale blue) are both found.
+#   2. Clean the mask and keep the largest blob (the flights) plus the smaller pieces
+#      close to it (the thin shaft often breaks where it crosses the wires).
+#   3. Thin the dart to a one pixel wide line (skeleton).
+#   4. The back is the thickest point of the dart (the middle of the flights).
+#      The tip is the skeleton end furthest away from it.
+# calculate_difference() above (used for throw detection) is not changed.
 
-BLUE_HUE = (95, 135)
-MIN_SATURATION = 80
-MIN_VALUE = 50
+BLUE_HUE = (90, 135)     # blue is around 120 in OpenCV (hue 0-179)
+MIN_SATURATION = 40      # loose: the colour-change test removes the board's own pixels
+MIN_VALUE = 25           # dark blue flights in shadow are still kept
+MIN_COLOUR_CHANGE = 30   # a pixel must change this much (0-255, any colour channel)
 
 
 def ellipse_mask(shape, ellipse):
@@ -82,28 +91,43 @@ def blue_mask(image, hue=BLUE_HUE,
     return blue.astype(np.uint8) * 255
 
 
-def new_blue(blue_now, blue_before, grow=7):
-    """Keep blue pixels not already present before the throw."""
-    grown_before = cv2.dilate(blue_before, np.ones((grow, grow), np.uint8))
-    return cv2.bitwise_and(blue_now, cv2.bitwise_not(grown_before))
+def colour_change(before, after, threshold=MIN_COLOUR_CHANGE):
+    """Returns a mask (0/255) of the pixels where any colour channel changed more than 'threshold'."""
+    difference = cv2.absdiff(before, after).max(axis=2)
+    return (difference > threshold).astype(np.uint8) * 255
 
 
 def clean_mask(mask, open_size=2, close_size=5):
-    """Remove noisy pixels and connect small gaps."""
+    """Remove noisy pixels (opening) and connect small gaps (closing)."""
     opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN,
                               np.ones((open_size, open_size), np.uint8))
     return cv2.morphologyEx(opened, cv2.MORPH_CLOSE,
                             np.ones((close_size, close_size), np.uint8))
 
 
-def largest_blob(mask):
-    """Return a mask for the largest connected blue component."""
+def dart_blobs(mask, near=40, min_piece=5):
+    """
+    Returns a mask with the dart, and the area of its largest blob.
+
+    The largest blob is the flights and the barrel. The shaft is thin and often breaks
+    into pieces, so every other blob of at least 'min_piece' pixels that lies within
+    'near' pixels of the largest blob is kept as part of the dart.
+    """
     count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    if count <= 1:
+    if count <= 1:                      # label 0 is the background, so there is no blob
         return np.zeros_like(mask), 0
+
     areas = stats[1:, cv2.CC_STAT_AREA]
     biggest = 1 + int(np.argmax(areas))
-    return (labels == biggest).astype(np.uint8) * 255, int(areas.max())
+    dart = (labels == biggest).astype(np.uint8) * 255
+
+    disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * near + 1, 2 * near + 1))
+    close_by = cv2.dilate(dart, disk) > 0
+    for label in range(1, count):
+        piece = labels == label
+        if label != biggest and stats[label, cv2.CC_STAT_AREA] >= min_piece and close_by[piece].any():
+            dart[piece] = 255
+    return dart, int(areas.max())
 
 
 def skeletonize(mask):
@@ -141,41 +165,18 @@ def skeleton_ends(skeleton):
     return np.column_stack([xs, ys])
 
 
-def two_furthest_ends(ends):
-    """Take the two skeleton endpoints furthest apart."""
-    if len(ends) < 2:
-        return None
-    distances = np.linalg.norm(ends[:, None, :] - ends[None, :, :], axis=2)
-    a, b = np.unravel_index(np.argmax(distances), distances.shape)
-    return ends[a], ends[b]
-
-
-def change_mask(before, after, threshold=30):
-    """Find non-blue regions (such as flights) that changed between frames."""
-    difference = cv2.absdiff(cv2.cvtColor(before, cv2.COLOR_BGR2GRAY),
-                             cv2.cvtColor(after, cv2.COLOR_BGR2GRAY))
-    changed = (difference > threshold).astype(np.uint8) * 255
-    return cv2.morphologyEx(changed, cv2.MORPH_OPEN,
-                            np.ones((3, 3), np.uint8))
-
-
-def pixels_near(mask, point, radius):
-    """Count mask pixels inside a circle near a candidate endpoint."""
-    circle = np.zeros_like(mask)
-    cv2.circle(circle, (int(point[0]), int(point[1])), radius, 255, -1)
-    return int(np.count_nonzero((mask > 0) & (circle > 0)))
-
-
-def choose_tip(end_a, end_b, flights, radius=25):
-    """Treat the end nearest the white flights as the back of the dart."""
-    near_a = pixels_near(flights, end_a, radius)
-    near_b = pixels_near(flights, end_b, radius)
-    tip, back = (end_a, end_b) if near_a < near_b else (end_b, end_a)
-    return tip, back, (near_a, near_b)
+def thickest_point(mask):
+    """
+    Returns the (x, y) point deepest inside the mask (largest distance to the background).
+    For a dart this is the middle of the flights, the widest part.
+    """
+    distance = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+    y, x = np.unravel_index(np.argmax(distance), distance.shape)
+    return np.array([x, y])
 
 
 def extend_tip(tip, back, pixels):
-    """Extend the chosen blue endpoint towards the unpainted steel tip."""
+    """Extend the blue end of the dart towards the unpainted steel point."""
     tip, back = np.asarray(tip, float), np.asarray(back, float)
     norm = np.linalg.norm(tip - back)
     if norm == 0:
@@ -184,17 +185,17 @@ def extend_tip(tip, back, pixels):
     return tip + pixels * direction
 
 
-def find_dart(before, after, board_mask, min_pixels=5, tip_extension=1):
+def find_dart(before, after, board_mask, min_pixels=40, tip_extension=4):
     """Detect a NEW blue dart in two full-size frames; return diagnostic masks and tip."""
     if before.shape != after.shape or board_mask.shape != after.shape[:2]:
         raise ValueError("before, after and board_mask must have the same image dimensions")
 
     steps = {}
-    steps["blue_before"] = cv2.bitwise_and(blue_mask(before), board_mask)
     steps["blue_after"] = cv2.bitwise_and(blue_mask(after), board_mask)
-    steps["new_blue"] = new_blue(steps["blue_after"], steps["blue_before"])
+    steps["changed"] = colour_change(before, after)
+    steps["new_blue"] = cv2.bitwise_and(steps["blue_after"], steps["changed"])
     steps["cleaned"] = clean_mask(steps["new_blue"])
-    steps["dart"], steps["area"] = largest_blob(steps["cleaned"])
+    steps["dart"], steps["area"] = dart_blobs(steps["cleaned"])
     steps["found"] = steps["area"] >= min_pixels
     if not steps["found"]:
         return steps
@@ -207,18 +208,14 @@ def find_dart(before, after, board_mask, min_pixels=5, tip_extension=1):
     steps["skeleton"] = np.zeros_like(steps["dart"])
     steps["skeleton"][y1:y2, x1:x2] = skeletonize(steps["dart"][y1:y2, x1:x2])
     steps["ends"] = skeleton_ends(steps["skeleton"])
-    pair = two_furthest_ends(steps["ends"])
-    if pair is None:
+    if len(steps["ends"]) == 0:
         steps["found"] = False
         return steps
 
-    flights = change_mask(before, after)
-    flights[cv2.dilate(steps["dart"], np.ones((5, 5), np.uint8)) > 0] = 0
-    steps["flights"] = cv2.bitwise_and(flights, board_mask)
-
-    steps["blue_end"], steps["back"], steps["flight_counts"] = choose_tip(
-        pair[0], pair[1], steps["flights"]
-    )
+    # Back = middle of the flights, tip = the skeleton end furthest away from it
+    steps["back"] = thickest_point(steps["dart"])
+    distances = np.linalg.norm(steps["ends"] - steps["back"], axis=1)
+    steps["blue_end"] = steps["ends"][np.argmax(distances)]
     steps["tip"] = extend_tip(steps["blue_end"], steps["back"], tip_extension)
     return steps
 
