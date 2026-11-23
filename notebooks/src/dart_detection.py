@@ -199,7 +199,13 @@ def find_dart(before, after, board_mask, min_pixels=5, tip_extension=1):
     if not steps["found"]:
         return steps
 
-    steps["skeleton"] = skeletonize(steps["dart"])
+    # Thinning only needs the box around the dart (plus a 1 pixel border of background),
+    # which is much faster than thinning the full frame and gives the same skeleton
+    ys, xs = np.nonzero(steps["dart"])
+    y1, y2 = max(ys.min() - 1, 0), ys.max() + 2
+    x1, x2 = max(xs.min() - 1, 0), xs.max() + 2
+    steps["skeleton"] = np.zeros_like(steps["dart"])
+    steps["skeleton"][y1:y2, x1:x2] = skeletonize(steps["dart"][y1:y2, x1:x2])
     steps["ends"] = skeleton_ends(steps["skeleton"])
     pair = two_furthest_ends(steps["ends"])
     if pair is None:

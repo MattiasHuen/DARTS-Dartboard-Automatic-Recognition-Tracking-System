@@ -66,8 +66,27 @@ class DartBoard:
             self.field_map = result["field_map"]
 
             self.fields_detected = True
+            self._prepare_board_crop()
 
         return True
+
+    def _prepare_board_crop(self):
+        """
+        Computes everything about the board area that does not change between frames:
+        the bounding box of the outer ellipse, the ellipse mask inside that box, and
+        the fields moved into the box. Then every frame only has to be cropped and drawn
+        on (about 400x400 pixels instead of the full 1920x1080 frame).
+        """
+        mask = ellipse_mask(self.frame.shape, self.outer_ellipse)
+        x, y, w, h = cv2.boundingRect(cv2.findNonZero(mask))
+
+        self.board_rect = (x, y, w, h)
+        self.roi_mask = mask[y:y+h, x:x+w]
+        self.roi_field_map = self.field_map[y:y+h, x:x+w]
+        self.roi_fields = [
+            {**field, "outline": field["outline"] - np.array([x, y], dtype=field["outline"].dtype)}
+            for field in self.fields
+        ]
 
     
     def draw_fields(self):
@@ -127,22 +146,14 @@ class DartBoard:
         if self.fields_detected is False:
             raise ValueError("Fields must be found first")
 
-        output = self.draw_fields() if with_fields else self.frame.copy()
+        # Crop first, then draw: the box and mask were computed once in _prepare_board_crop()
+        x, y, w, h = self.board_rect
+        crop = self.frame[y:y+h, x:x+w]
+        if with_fields:
+            crop = draw_fields(crop, self.roi_fields, self.roi_field_map)
 
-        mask = np.zeros(self.frame.shape[:2], dtype=np.uint8)
-
-        (cx, cy), (width, height), angle = self.outer_ellipse
-        cv2.ellipse(mask,
-        (int(cx), int(cy)),
-        (int(width / 2), int(height / 2)),
-        angle,
-        0,360,255,-1
-        )
-        
-        isolated = cv2.bitwise_and(output, output, mask=mask)
-
-        x, y, w, h = cv2.boundingRect(cv2.findNonZero(mask))
-        return isolated[y:y+h, x:x+w], (x, y)
+        isolated = cv2.bitwise_and(crop, crop, mask=self.roi_mask)
+        return isolated, (x, y)
         
     
 
